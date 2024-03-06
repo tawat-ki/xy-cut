@@ -68,7 +68,7 @@ def split_projection_profile(arr_values: np.array, min_value: float, min_gap: fl
     return arr_start, arr_end
 
 
-def recursive_xy_cut(boxes: np.ndarray, indices: List[int], res: List[int]):
+def recursive_xy_cut_original(boxes: np.ndarray, indices: List[int], res: List[int], swap_axis=False):
     """
 
     Args:
@@ -80,13 +80,15 @@ def recursive_xy_cut(boxes: np.ndarray, indices: List[int], res: List[int]):
     # 向 y 轴投影
     assert len(boxes) == len(indices)
 
-    _indices = boxes[:, 1].argsort()
+    _indices = boxes[:, 1 ^ swap_axis].argsort()
     y_sorted_boxes = boxes[_indices]
     y_sorted_indices = indices[_indices]
 
     # debug_vis(y_sorted_boxes, y_sorted_indices)
 
-    y_projection = projection_by_bboxes(boxes=y_sorted_boxes, axis=1)
+    y_projection = projection_by_bboxes(boxes=y_sorted_boxes,
+                                        axis=1 ^ swap_axis)
+
     pos_y = split_projection_profile(y_projection, 0, 1)
     if not pos_y:
         return
@@ -94,17 +96,18 @@ def recursive_xy_cut(boxes: np.ndarray, indices: List[int], res: List[int]):
     arr_y0, arr_y1 = pos_y
     for r0, r1 in zip(arr_y0, arr_y1):
         # [r0, r1] 表示按照水平切分，有 bbox 的区域，对这些区域会再进行垂直切分
-        _indices = (r0 <= y_sorted_boxes[:, 1]) & (y_sorted_boxes[:, 1] < r1)
-
+        _indices = (r0 <= y_sorted_boxes[:, 1 ^ swap_axis]) & (
+                y_sorted_boxes[:, 1 ^ swap_axis] < r1)
         y_sorted_boxes_chunk = y_sorted_boxes[_indices]
         y_sorted_indices_chunk = y_sorted_indices[_indices]
 
-        _indices = y_sorted_boxes_chunk[:, 0].argsort()
+        _indices = y_sorted_boxes_chunk[:, 0 ^ swap_axis].argsort()
         x_sorted_boxes_chunk = y_sorted_boxes_chunk[_indices]
         x_sorted_indices_chunk = y_sorted_indices_chunk[_indices]
 
         # 往 x 方向投影
-        x_projection = projection_by_bboxes(boxes=x_sorted_boxes_chunk, axis=0)
+        x_projection = projection_by_bboxes(boxes=x_sorted_boxes_chunk,
+                                            axis=0 ^ swap_axis)
         pos_x = split_projection_profile(x_projection, 0, 1)
         if not pos_x:
             continue
@@ -117,12 +120,49 @@ def recursive_xy_cut(boxes: np.ndarray, indices: List[int], res: List[int]):
 
         # x 方向上能分开，继续递归调用
         for c0, c1 in zip(arr_x0, arr_x1):
-            _indices = (c0 <= x_sorted_boxes_chunk[:, 0]) & (
-                x_sorted_boxes_chunk[:, 0] < c1
+            _indices = (c0 <= x_sorted_boxes_chunk[:, 0 ^ swap_axis]) & (
+                x_sorted_boxes_chunk[:, 0 ^ swap_axis] < c1
             )
-            recursive_xy_cut(
+            recursive_xy_cut_original(
                 x_sorted_boxes_chunk[_indices], x_sorted_indices_chunk[_indices], res
             )
+
+def recursive_xy_cut(boxes: np.ndarray, indices:List[int], res: List[int], axis):
+    assert len(boxes) == len(indices)
+
+    if len(indices) == 1:
+        res.extend(indices.tolist())  # handle case start with length == 1
+        return indices
+    indices_ = boxes[:, axis].argsort()
+    sorted_boxes = boxes[indices_]
+    projection = projection_by_bboxes(boxes=sorted_boxes, axis=axis)
+    sorted_indices = indices[indices_]
+    start_end_list = split_projection_profile(projection, 0, 1)
+
+    # prefer top-down when dead end
+    if len(start_end_list[0])==1:
+        indices_alt = boxes[:, axis^1].argsort()
+        sorted_boxes_alt = boxes[indices_alt]
+        projection_alt = projection_by_bboxes(boxes=sorted_boxes_alt, axis=axis^1)
+        start_end_list_alt = split_projection_profile(projection_alt, 0, 1)
+        if len(start_end_list_alt[0]) == 1:
+            return indices[indices_alt] if axis==0 else indices[indices_]
+
+    if not start_end_list:
+        return
+
+    start_list, end_list = start_end_list
+    for start, end in zip(start_list, end_list):
+        is_intersect_indices = (start <= sorted_boxes[:, 2 ^ axis]) & \
+                (sorted_boxes[:, 0 ^ axis] < end)
+        if np.sum(is_intersect_indices) > 0:
+            res.extend(recursive_xy_cut(
+                sorted_boxes[is_intersect_indices],
+                sorted_indices[is_intersect_indices],
+                [],
+                axis ^ 1
+            ))
+    return res
 
 
 def points_to_bbox(points):
@@ -212,7 +252,8 @@ def vis_points(
 
         txt = texts[i]
         font = cv2.FONT_HERSHEY_SIMPLEX
-        cat_size = cv2.getTextSize(txt, font, 0.5, 2)[0]
+        font_size = 2
+        cat_size = cv2.getTextSize(txt, font, font_size, 2)[0]
 
         img = cv2.rectangle(
             img,
@@ -227,9 +268,10 @@ def vis_points(
             txt,
             (cx - 5 * len(txt), cy - 5),
             font,
-            0.5,
+            # 0.5,
+            font_size,
             (255, 255, 255),
-            thickness=1,
+            thickness=3,
             lineType=cv2.LINE_AA,
         )
 
