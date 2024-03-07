@@ -129,39 +129,39 @@ def recursive_xy_cut_original(boxes: np.ndarray, indices: List[int], res: List[i
 
 def recursive_xy_cut(boxes: np.ndarray, indices:List[int], res: List[int], axis):
     assert len(boxes) == len(indices)
-
-    if len(indices) == 1:
-        res.extend(indices.tolist())  # handle case start with length == 1
-        return indices
+    if len(indices) <= 1:
+        return res.extend(indices.tolist())
+        # return indices
     indices_ = boxes[:, axis].argsort()
     sorted_boxes = boxes[indices_]
     projection = projection_by_bboxes(boxes=sorted_boxes, axis=axis)
     sorted_indices = indices[indices_]
     start_end_list = split_projection_profile(projection, 0, 1)
 
-    # prefer top-down when dead end
     if len(start_end_list[0])==1:
         indices_alt = boxes[:, axis^1].argsort()
         sorted_boxes_alt = boxes[indices_alt]
         projection_alt = projection_by_bboxes(boxes=sorted_boxes_alt, axis=axis^1)
         start_end_list_alt = split_projection_profile(projection_alt, 0, 1)
         if len(start_end_list_alt[0]) == 1:
-            return indices[indices_alt] if axis==0 else indices[indices_]
-
-    if not start_end_list:
-        return
+            # prefer top-down when can not cut
+            return  res.extend(indices[indices_alt].tolist()
+                               if axis==0 else 
+                               indices[indices_].tolist())
 
     start_list, end_list = start_end_list
     for start, end in zip(start_list, end_list):
         is_intersect_indices = (start <= sorted_boxes[:, 2 ^ axis]) & \
                 (sorted_boxes[:, 0 ^ axis] < end)
         if np.sum(is_intersect_indices) > 0:
-            res.extend(recursive_xy_cut(
+            temp = []
+            recursive_xy_cut(
                 sorted_boxes[is_intersect_indices],
                 sorted_indices[is_intersect_indices],
-                [],
+                temp,
                 axis ^ 1
-            ))
+            )
+            res.extend(temp)
     return res
 
 
